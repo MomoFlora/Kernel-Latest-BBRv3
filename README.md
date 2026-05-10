@@ -74,14 +74,14 @@ BBR v3 represents the next generation of TCP congestion control, developed by Go
 ### Option 1: Pipe to Bash
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/MomoFlora/kernel-latest-bbr3/main/install.sh | sudo bash
+curl -sSL https://raw.githubusercontent.com/MomoFlora/kernel-latest-bbr3/master/install.sh | sudo bash
 ```
 
 ### Option 2: Manual Installation
 
 ```bash
 # 1. Download the installer
-wget https://raw.githubusercontent.com/MomoFlora/kernel-latest-bbr3/main/install.sh
+wget https://raw.githubusercontent.com/MomoFlora/kernel-latest-bbr3/master/install.sh
 
 # 2. Grant execution permission
 chmod +x install.sh
