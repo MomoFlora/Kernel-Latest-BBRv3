@@ -136,42 +136,49 @@ install_latest_kernel() {
         return 1
     fi
     
-    log_success "检索到最新版本: $LATEST_TAG"
-
     local CURRENT_KERNEL=$(uname -r)
-    log_info "当前系统内核版本: $CURRENT_KERNEL"
+    log_info "最新发布版本: $LATEST_TAG"
+    log_info "当前系统内核: $CURRENT_KERNEL"
+
+    # --- 版本检测逻辑：如果当前内核是以最新 Tag 开头的，则无需更新 ---
+    if [[ "$CURRENT_KERNEL" == "$LATEST_TAG"* ]]; then
+        log_success "检测到当前内核已经是最新版本 ($LATEST_TAG)，无需重复安装。"
+        return 0
+    fi
+
+    log_warn "发现新版本，准备开始安装程序..."
 
     # 提取以 .deb 结尾的下载链接
     local ASSET_URLS=$(echo "$RELEASE_DATA" | jq -r '.assets[] | select(.name | endswith(".deb")) | .browser_download_url')
     
     if [[ -z "$ASSET_URLS" ]]; then
-        log_error "该版本中未找到任何 .deb 安装包。"
+        log_error "该 Release 版本中未找到任何 .deb 安装包。"
         return 1
     fi
 
     rm -f /tmp/linux-*.deb
     
-    log_info "开始下载内核组件..."
+    log_info "开始从 GitHub 获取内核组件..."
     for URL in $ASSET_URLS; do
         log_info "下载 -> $(basename "$URL")"
         wget -q --show-progress "$URL" -P /tmp/ || { log_error "下载失败：$URL"; return 1; }
     done
 
-    log_info "开始安装新内核..."
+    log_info "正在调用 dpkg 安装内核..."
     if sudo dpkg -i /tmp/linux-*.deb; then
         command -v update-grub &> /dev/null && sudo update-grub >/dev/null 2>&1
-        log_success "内核包安装成功！"
+        log_success "内核安装包部署成功！"
         
-        echo -n -e "${YELLOW}[PROMPT]${NC} 需要重启系统以加载新内核。是否立即重启？(y/n): "
+        echo -n -e "${YELLOW}[PROMPT]${NC} 内核更新需要重启系统生效。是否立即重启？(y/n): "
         read -r REBOOT_NOW
         if [[ "$REBOOT_NOW" =~ ^[Yy]$ ]]; then
-            log_info "系统即将重启..."
+            log_info "系统执行重启..."
             sudo reboot
         else
-            log_warn "请稍后手动执行重启命令以应用新内核。"
+            log_warn "请稍后务必手动执行重启命令以应用新内核。"
         fi
     else
-        log_error "内核安装失败，请检查 dpkg 输出。"
+        log_error "内核安装失败，请检查上方 dpkg 报错详情。"
     fi
 }
 
@@ -179,7 +186,7 @@ install_latest_kernel() {
 configure_bbr() {
     local TARGET_QDISC="$1"
     
-    log_info "正在应用配置: BBR + $TARGET_QDISC ..."
+    log_info "正在应用网络配置: BBR + $TARGET_QDISC ..."
     sudo sysctl -w net.core.default_qdisc="$TARGET_QDISC" > /dev/null 2>&1
     sudo sysctl -w net.ipv4.tcp_congestion_control="bbr" > /dev/null 2>&1
 
@@ -202,18 +209,18 @@ configure_bbr() {
             else
                 sudo rm -f "$MODULES_CONF"
             fi
-            log_success "配置已永久保存！"
+            log_success "配置已永久固化至系统。"
         else
-            log_info "当前配置为临时生效，重启后将恢复系统默认设置。"
+            log_info "当前为临时生效，重启后会还原。"
         fi
     else
-        log_error "配置应用失败，当前内核可能不支持 $TARGET_QDISC 算法。"
+        log_error "配置应用失败。请确保您已切换到支持 BBR3 的内核。"
     fi
 }
 
 # --- 系统检测分析 ---
 analyze_system() {
-    log_info "执行系统底层网络参数扫描..."
+    log_info "正在执行系统底层网络参数扫描..."
     
     local BBR_MODULE_INFO=$(modinfo tcp_bbr 2>/dev/null)
     if [[ -z "$BBR_MODULE_INFO" ]]; then
@@ -222,40 +229,35 @@ analyze_system() {
     fi
     
     if [[ -z "$BBR_MODULE_INFO" ]]; then
-        log_error "未检测到 tcp_bbr 模块。请先安装内核并重启系统。"
+        log_error "未检测到 tcp_bbr 模块。请先运行选项 1 安装内核并重启。"
         return
     fi
     
     local BBR_VERSION=$(echo "$BBR_MODULE_INFO" | awk '/^version:/ {print $2}')
     if [[ "$BBR_VERSION" == "3" ]]; then
-        log_success "BBR 版本检测: v$BBR_VERSION"
+        log_success "BBR 版本状态: v$BBR_VERSION (BBR3 已就绪)"
     else
-        log_warn "BBR 版本检测: v${BBR_VERSION:-未知} (非 v3 版本)"
+        log_warn "BBR 版本状态: v${BBR_VERSION:-未知} (当前非 BBR3 环境)"
     fi
 
     get_current_status
-    if [[ "$CURRENT_ALGO" == "bbr" ]]; then
-        log_success "拥塞控制算法: $CURRENT_ALGO"
-    else
-        log_warn "拥塞控制算法: $CURRENT_ALGO (推荐使用 bbr)"
-    fi
-    log_info "全局队列调度: $CURRENT_QDISC"
+    log_info "当前运行状态:"
+    echo -e "  - TCP 拥塞控制: ${GREEN}$CURRENT_ALGO${NC}"
+    echo -e "  - 队列调度算法: ${GREEN}$CURRENT_QDISC${NC}"
 }
 
 # --- 卸载逻辑 ---
 uninstall_kernel() {
-    log_warn "正在检索与 BBR3 相关的自定义内核包..."
-    # 查找并列出除系统核心以外的自定义包（通常带有特定的命名，需根据编译习惯确认）
-    # 这里使用通用安全匹配查找非系统默认安装的包
+    log_warn "正在检索系统中的自定义 BBR3 内核包..."
     local PKGS=$(dpkg -l | grep -iE 'linux-image-.*-bbr3|linux-headers-.*-bbr3' | awk '{print $2}' | tr '\n' ' ')
     
     if [[ -n "$PKGS" ]]; then
-        log_info "将卸载以下组件: $PKGS"
+        log_info "即将卸载以下包: $PKGS"
         sudo apt-get remove --purge $PKGS -y
         command -v update-grub &> /dev/null && sudo update-grub >/dev/null 2>&1
-        log_success "内核组件已移除，请务必重启系统以回退到默认内核。"
+        log_success "内核组件已移除。请务必立即重启系统以回退到默认内核！"
     else
-        log_info "未检测到特定名称的 BBR3 内核包。"
+        log_info "系统未发现特定命名的 BBR3 内核包。"
     fi
 }
 
@@ -269,7 +271,7 @@ main() {
         get_current_status
         
         echo -e "  当前 TCP 算法 : ${GREEN}${CURRENT_ALGO}${NC}"
-        echo -e "  当前队列调度  : ${GREEN}${CURRENT_QDISC}${NC}"
+        echo -e "  当前队列调度 : ${GREEN}${CURRENT_QDISC}${NC}"
         echo -e " ---------------------------------------------------------"
         echo -e "  ${BLUE}1.${NC} 安装 / 更新最新版 BBR v3"
         echo -e "  ${BLUE}2.${NC} 检测系统 BBR 运行状态"
