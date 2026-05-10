@@ -45,14 +45,14 @@ jobs:
           git clone --depth=1 --branch linux-$branch.y https://github.com/gregkh/linux.git linux
 
     - name: Add Google BBRv3
-      working-directory: /linux
+      working-directory: ./linux
       run: |
         git remote add google-bbr https://github.com/google/bbr.git
         git fetch google-bbr
         git checkout google-bbr/v3
 
     - name: Patch BBR Module Description
-      working-directory: /linux
+      working-directory: ./linux
       run: |
         grep -v "MODULE_DESCRIPTION" net/ipv4/tcp_bbr.c > net/ipv4/tcp_bbr.c.tmp
         mv net/ipv4/tcp_bbr.c.tmp net/ipv4/tcp_bbr.c  
@@ -60,7 +60,7 @@ jobs:
         tail -n 5 net/ipv4/tcp_bbr.c
 
     - name: Update Kernel Version in Makefile
-      working-directory: /linux
+      working-directory: ./linux
       run: |
         IFS='.' read -r v p s <<< "${{ env.KERNEL_VERSION }}"
         sed -i "s/^VERSION *=.*/VERSION = $v/" Makefile
@@ -68,7 +68,7 @@ jobs:
         sed -i "s/^SUBLEVEL *=.*/SUBLEVEL = $s/" Makefile
 
     - name: Prepare Kernel Configuration
-      working-directory: /linux
+      working-directory: ./linux
       run: |
           cp -f $GITHUB_WORKSPACE/configs/x86_64.config .config
           scripts/config --disable SYSTEM_TRUSTED_KEYS
@@ -81,7 +81,7 @@ jobs:
           make olddefconfig
 
     - name: Build Debian Kernel Packages
-      working-directory: /linux
+      working-directory: ./linux
       run: |
           make bindeb-pkg -j$(nproc) LOCALVERSION=-MomoFlora-bbrv3 KDEB_COMPRESS=gzip skipdbg=true
 
