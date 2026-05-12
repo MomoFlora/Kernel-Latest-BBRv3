@@ -128,13 +128,6 @@ jobs:
 
         ---
 
-        ## 📥 Installation
-        ```bash
-        sudo dpkg -i *.deb
-        ```
-
-        ---
-
         ## ⚠️ Notes
         - Please verify compatibility before deploying in production environments
         - This kernel is optimized for performance-focused workloads
